@@ -3451,7 +3451,8 @@ impl Agent {
                                     // Surface and persist the failure message
                                     // through the normal path so recipes don't
                                     // exit silently when retries are exhausted.
-                                    let message = push_message_with_id(&mut messages_to_add, message);
+                                    let message =
+                                        push_message_with_id(&mut messages_to_add, *message);
                                     last_assistant_text = message.as_concat_text();
                                     yield AgentEvent::Message(message);
                                     exit_chat = true;
