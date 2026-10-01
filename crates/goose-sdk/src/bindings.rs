@@ -11,7 +11,7 @@ use futures::StreamExt;
 use goose_providers::{
     anthropic::AnthropicProviderBuilder,
     api_client::{ApiClient, AuthMethod},
-    base::{MessageStream, Provider as GooseProvider},
+    base::{MessageStream, ModelInfo, Provider as GooseProvider},
     conversation::{
         message::{Message, MessageContent as GooseMessageContent},
         token_usage::ProviderUsage,
@@ -489,9 +489,29 @@ pub struct ProviderModelConfig {
     pub request_headers: Option<HashMap<String, String>>,
 }
 
+/// A model advertised by the provider. Providers without model discovery
+/// return an empty list rather than an error.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProviderModelInfo {
+    pub name: String,
+    pub context_limit: Option<u64>,
+    pub supports_reasoning: bool,
+}
+
+impl From<ModelInfo> for ProviderModelInfo {
+    fn from(info: ModelInfo) -> Self {
+        Self {
+            name: info.name,
+            context_limit: info.context_limit.map(|limit| limit as u64),
+            supports_reasoning: info.reasoning,
+        }
+    }
+}
+
 impl ProviderModelConfig {
-    fn to_goose_model_config(&self) -> Result<ModelConfig, GooseError> {
+    fn to_goose_model_config(&self, provider_name: &str) -> Result<ModelConfig, GooseError> {
         let mut config = ModelConfig::new(&self.model_name)
+            .with_canonical_vision_support(provider_name)
             .with_temperature(self.temperature)
             .with_max_tokens(self.max_tokens)
             .with_toolshim(self.toolshim)
@@ -746,6 +766,13 @@ impl ProviderHandle {
         .await
     }
 
+    async fn list_models(&self) -> Result<Vec<ProviderModelInfo>, GooseError> {
+        let provider = Arc::clone(&self.provider);
+        let models =
+            run_on_runtime(async move { provider.fetch_supported_model_info().await }).await??;
+        Ok(models.into_iter().map(ProviderModelInfo::from).collect())
+    }
+
     async fn stream(
         &self,
         model: ProviderModelConfig,
@@ -754,7 +781,7 @@ impl ProviderHandle {
         tools: Vec<ProviderTool>,
     ) -> Result<Arc<ProviderStream>, GooseError> {
         let timeout_ms = model.timeout_ms;
-        let model = model.to_goose_model_config()?;
+        let model = model.to_goose_model_config(self.provider.get_name())?;
         let messages = convert_messages(messages)?;
         let tools = convert_tools(tools)?;
         let observer = Arc::new(RequestObserver::start(RequestDescriptor {
@@ -797,7 +824,7 @@ impl ProviderHandle {
         tools: Vec<ProviderTool>,
     ) -> Result<ProviderCompletion, GooseError> {
         let timeout_ms = model.timeout_ms;
-        let model = model.to_goose_model_config()?;
+        let model = model.to_goose_model_config(self.provider.get_name())?;
         let messages = convert_messages(messages)?;
         let tools = convert_tools(tools)?;
         let observer = RequestObserver::start(RequestDescriptor {
@@ -1095,6 +1122,10 @@ impl Provider {
 
     pub async fn context_limit(&self, model: ProviderModelConfig) -> Result<u64, GooseError> {
         Ok(self.handle.context_limit(model).await? as u64)
+    }
+
+    pub async fn list_models(&self) -> Result<Vec<ProviderModelInfo>, GooseError> {
+        self.handle.list_models().await
     }
 
     pub async fn stream(
@@ -1690,7 +1721,7 @@ mod tests {
             ..base_model_config()
         };
 
-        assert!(config.to_goose_model_config().is_err());
+        assert!(config.to_goose_model_config("openai").is_err());
     }
 
     #[test]

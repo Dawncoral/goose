@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use axum::http::{HeaderMap, HeaderName};
 use rmcp::model::{
-    CallToolResult, ErrorCode, ErrorData, GetPromptResult, ProtocolVersion, ServerInfo,
+    CallToolResult, ErrorCode, ErrorData, GetPromptResult, ProtocolVersion, ServerConfig,
     ServerNotification,
 };
 use rmcp::service::{ClientInitializeError, ServiceError};
@@ -216,7 +216,9 @@ fn http_client(
     timeout: Duration,
 ) -> ExtensionResult<reqwest::Client> {
     #[allow(unused_mut)]
-    let mut builder = reqwest::Client::builder().default_headers(header_map(headers)?);
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .default_headers(header_map(headers)?);
     #[cfg(target_os = "linux")]
     {
         builder = builder.tcp_user_timeout(Some(timeout));
@@ -296,7 +298,7 @@ pub(super) struct ConnectParams {
 /// (requesting the union of scopes), reconnect, and retry the request once.
 struct OAuthStepUpClient {
     inner: tokio::sync::RwLock<McpClient>,
-    server_info: Option<ServerInfo>,
+    server_info: Option<ServerConfig>,
     params: tokio::sync::RwLock<ConnectParams>,
     step_up_lock: tokio::sync::Mutex<()>,
     notification_subscribers: Arc<Mutex<Vec<mpsc::Sender<ServerNotification>>>>,
@@ -454,7 +456,7 @@ impl McpClientTrait for OAuthStepUpClient {
         .await
     }
 
-    fn get_info(&self) -> Option<&ServerInfo> {
+    fn get_info(&self) -> Option<&ServerConfig> {
         self.server_info.as_ref()
     }
 
@@ -695,7 +697,6 @@ mod tests {
     fn test_ctx(working_dir: &std::path::Path) -> ConnectContext {
         ConnectContext {
             timeout: Duration::from_secs(5),
-            provider: Arc::new(Mutex::new(None)),
             client_name: "goose-test".to_string(),
             capabilities: GooseMcpClientCapabilities {
                 mcpui: false,
@@ -952,6 +953,116 @@ mod tests {
             header_found,
             "custom header x-api-key was not forwarded through the OAuth connection path"
         );
+    }
+
+    /// Option-B verification (unauthenticated client): a server 3xx must be
+    /// surfaced to the transport and the redirect target must never be contacted.
+    #[tokio::test]
+    async fn test_redirect_not_followed_unauthenticated() {
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&target)
+            .await;
+
+        let redirector = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(307).insert_header("location", target.uri()))
+            .mount(&redirector)
+            .await;
+
+        let temp_dir = tempdir().unwrap();
+        let result = connect(
+            test_params(&redirector.uri(), HashMap::new(), temp_dir.path()),
+            None,
+            Box::new(InMemoryCredentialStore::new()),
+        )
+        .await;
+
+        // The 3xx is surfaced (connection fails); it is not silently followed.
+        assert!(result.is_err(), "expected 3xx to be surfaced as an error");
+        // The redirect target must never have been contacted.
+        let target_requests = target.received_requests().await.unwrap();
+        assert!(
+            target_requests.is_empty(),
+            "redirect target was contacted: {target_requests:?}"
+        );
+        // The redirector itself did receive the request.
+        assert!(!redirector.received_requests().await.unwrap().is_empty());
+    }
+
+    /// Option-B verification (authenticated client): same guarantee on the
+    /// `connect_with_auth` path, and the custom auth header is sent to the
+    /// redirector — never forwarded to the redirect target.
+    #[tokio::test]
+    async fn test_redirect_not_followed_with_auth_headers() {
+        use rmcp::transport::auth::{
+            InMemoryCredentialStore, OAuthTokenResponse, StoredCredentials,
+        };
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&target)
+            .await;
+
+        let redirector = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(307).insert_header("location", target.uri()))
+            .mount(&redirector)
+            .await;
+
+        let mut headers = HashMap::new();
+        headers.insert("x-api-key".to_string(), "test-secret-redirect".to_string());
+
+        let token_response: OAuthTokenResponse = serde_json::from_value(serde_json::json!({
+            "access_token": "fake-test-token",
+            "token_type": "bearer",
+        }))
+        .expect("valid fake token JSON");
+        let creds = StoredCredentials::new(
+            "test-client".to_string(),
+            Some(token_response),
+            vec![],
+            None,
+        );
+        let store = InMemoryCredentialStore::new();
+        store.save(creds).await.unwrap();
+
+        let mut auth_manager = rmcp::transport::AuthorizationManager::new(redirector.uri())
+            .await
+            .expect("AuthorizationManager::new should not make network calls");
+        auth_manager.set_credential_store(store);
+
+        let temp_dir = tempdir().unwrap();
+        let result = connect_with_auth(
+            auth_manager,
+            &redirector.uri(),
+            &headers,
+            test_ctx(temp_dir.path()),
+        )
+        .await;
+
+        assert!(result.is_err(), "expected 3xx to be surfaced as an error");
+        let target_requests = target.received_requests().await.unwrap();
+        assert!(
+            target_requests.is_empty(),
+            "redirect target was contacted: {target_requests:?}"
+        );
+        // The auth header reached the redirector only.
+        let redirect_requests = redirector.received_requests().await.unwrap();
+        assert!(!redirect_requests.is_empty());
+        assert!(redirect_requests.iter().any(|req| {
+            req.headers
+                .get("x-api-key")
+                .map(|v| v == "test-secret-redirect")
+                .unwrap_or(false)
+        }));
     }
 
     mod static_oauth_client {
