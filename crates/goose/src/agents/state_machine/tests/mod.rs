@@ -211,12 +211,28 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
             .with_operation(Arc::new(AutoEffortOperation::new(
                 Arc::new(decision_provider),
                 "test-effort-model".to_string(),
+                vec![ThinkingEffort::Off, ThinkingEffort::High],
             )));
     api.on("add one").call(ADD, value(1));
     api.on("result: 1").reply("The total is 1");
     api.on("hello").reply("hi there!");
 
     let result = pipeline.run(["add one", "hello"]).await?;
+
+    let requests = jev
+        .received_requests()
+        .await
+        .expect("requests should be recorded");
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        let body: serde_json::Value = serde_json::from_slice(&request.body)?;
+        let criteria = body["questions"]["effort"]["criteria"]
+            .as_object()
+            .expect("effort criteria should be an object");
+        assert_eq!(criteria.len(), 2);
+        assert!(criteria.contains_key("off"));
+        assert!(criteria.contains_key("high"));
+    }
 
     let conversation = result.conversation();
     let events: Vec<_> = conversation

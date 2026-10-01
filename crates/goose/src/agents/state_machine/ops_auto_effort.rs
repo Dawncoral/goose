@@ -40,14 +40,47 @@ impl EffortDecision {
 pub struct AutoEffortOperation {
     provider: Arc<dyn DecisionProvider>,
     model: String,
+    efforts: Vec<ThinkingEffort>,
 }
 
 impl AutoEffortOperation {
-    pub(crate) fn new(provider: Arc<dyn DecisionProvider>, model: String) -> Self {
-        Self { provider, model }
+    pub(crate) fn new(
+        provider: Arc<dyn DecisionProvider>,
+        model: String,
+        efforts: Vec<ThinkingEffort>,
+    ) -> Self {
+        Self {
+            provider,
+            model,
+            efforts,
+        }
     }
 
     async fn classify(&self, request: &str) -> Result<EffortDecision> {
+        let criteria = self
+            .efforts
+            .iter()
+            .map(|effort| {
+                let description = match effort {
+                    ThinkingEffort::Off => {
+                        "No reasoning is needed, such as a greeting or a direct factual response."
+                    }
+                    ThinkingEffort::Low => {
+                        "A small amount of reasoning is enough for a simple, well-scoped task."
+                    }
+                    ThinkingEffort::Medium => {
+                        "The task needs several reasoning steps or ordinary coding work."
+                    }
+                    ThinkingEffort::High => {
+                        "The task is complex, ambiguous, or needs careful planning and verification."
+                    }
+                    ThinkingEffort::Max => {
+                        "The task is exceptionally difficult or high stakes and benefits from the deepest available reasoning."
+                    }
+                };
+                (effort.to_string(), description.to_string())
+            })
+            .collect();
         let mut response = self
             .provider
             .create_decision(&DecisionRequest {
@@ -59,33 +92,7 @@ impl AutoEffortOperation {
                         instructions:
                             "Choose the least thinking effort that can reliably handle this request."
                                 .to_string(),
-                        criteria: HashMap::from([
-                            (
-                                "off".to_string(),
-                                "No reasoning is needed, such as a greeting or a direct factual response."
-                                    .to_string(),
-                            ),
-                            (
-                                "low".to_string(),
-                                "A small amount of reasoning is enough for a simple, well-scoped task."
-                                    .to_string(),
-                            ),
-                            (
-                                "medium".to_string(),
-                                "The task needs several reasoning steps or ordinary coding work."
-                                    .to_string(),
-                            ),
-                            (
-                                "high".to_string(),
-                                "The task is complex, ambiguous, or needs careful planning and verification."
-                                    .to_string(),
-                            ),
-                            (
-                                "max".to_string(),
-                                "The task is exceptionally difficult or high stakes and benefits from the deepest available reasoning."
-                                    .to_string(),
-                            ),
-                        ]),
+                        criteria,
                     },
                 )]),
             })
@@ -104,9 +111,15 @@ impl AutoEffortOperation {
                 "decision provider returned a non-choice effort answer"
             ));
         };
+        let effort = choice.parse().map_err(anyhow::Error::msg)?;
+        if !self.efforts.contains(&effort) {
+            return Err(anyhow!(
+                "decision provider returned unavailable effort '{effort}'"
+            ));
+        }
 
         Ok(EffortDecision {
-            effort: Some(choice.parse().map_err(anyhow::Error::msg)?),
+            effort: Some(effort),
             model: Some(response.model),
             confidence: Some(confidence),
             probabilities,

@@ -107,13 +107,13 @@ function StatRow({
 
 /**
  * Per-message usage chip (tok/s, cost, total tokens) with a tooltip breaking
- * down tokens, caching, timing, and cost. Renders nothing without data.
+ * down tokens, caching, timing, cost, and operation logs.
  */
 export default function MessageUsageStats({
   usage,
   operationLogs = [],
 }: {
-  usage: MessageUsage;
+  usage?: MessageUsage | null;
   operationLogs?: string[];
 }) {
   const intl = useIntl();
@@ -128,7 +128,7 @@ export default function MessageUsageStats({
     elapsedMs,
     timeToFirstTokenMs,
     isCompaction,
-  } = usage;
+  } = usage ?? {};
 
   const tps = tokensPerSecond(outputTokens, elapsedMs);
 
@@ -154,6 +154,12 @@ export default function MessageUsageStats({
       <span key="tokens">
         {formatTokenCount(totalTokens)} {intl.formatMessage(i18n.tokenUnit)}
       </span>
+    );
+  }
+
+  if (chipSegments.length === 0 && operationLogs.length > 0) {
+    chipSegments.push(
+      <Zap key="operations" className="h-3 w-3" aria-label={operationLogs.join(', ')} />
     );
   }
 

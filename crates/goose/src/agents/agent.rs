@@ -88,6 +88,13 @@ use tracing::{debug, error, info, instrument, warn};
 
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
+const AUTO_EFFORTS: [ThinkingEffort; 5] = [
+    ThinkingEffort::Off,
+    ThinkingEffort::Low,
+    ThinkingEffort::Medium,
+    ThinkingEffort::High,
+    ThinkingEffort::Max,
+];
 const COMPACTION_PROGRESS_TEXT: &str = "goose is compacting the conversation...";
 const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 const EMPTY_TURN_MESSAGE: &str =
@@ -1746,6 +1753,20 @@ impl Agent {
                 return None;
             }
 
+            let efforts = match provider.thinking_effort_support() {
+                ThinkingEffortSupport::Unspecified => AUTO_EFFORTS.to_vec(),
+                ThinkingEffortSupport::Unsupported => return None,
+                ThinkingEffortSupport::Options(capability) => AUTO_EFFORTS
+                    .into_iter()
+                    .filter(|effort| {
+                        crate::acp::map_effort_value(&capability, &effort.to_string()).is_some()
+                    })
+                    .collect(),
+            };
+            if efforts.is_empty() {
+                return None;
+            }
+
             let api_key = config
                 .get_secret::<String>("TYPESAFE_API_KEY")
                 .ok()?
@@ -1766,6 +1787,7 @@ impl Agent {
             Some(AutoEffortOperation::new(
                 Arc::new(TypeSafeProvider::new(api_client)),
                 TYPESAFE_DEFAULT_MODEL.to_string(),
+                efforts,
             ))
         })();
         if let Some(auto_effort) = auto_effort {

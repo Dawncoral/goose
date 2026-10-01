@@ -96,4 +96,17 @@ describe('MessageUsageStats', () => {
     expect(tooltip.getByText('(estimated)')).toBeInTheDocument();
     expect(tooltip.getByText('ops_auto_effort: thinking off')).toBeInTheDocument();
   });
+
+  it('shows operation logs without usage metadata', async () => {
+    const user = userEvent.setup();
+    render(<MessageUsageStats operationLogs={['ops_auto_effort: thinking off']} />, {
+      wrapper: IntlTestWrapper,
+    });
+
+    await user.hover(screen.getByLabelText('ops_auto_effort: thinking off'));
+
+    expect(
+      within(await screen.findByRole('tooltip')).getByText('ops_auto_effort: thinking off')
+    ).toBeInTheDocument();
+  });
 });
