@@ -43,7 +43,7 @@ pub struct AutoEffortOperation {
 }
 
 impl AutoEffortOperation {
-    pub(super) fn new(provider: Arc<dyn DecisionProvider>, model: String) -> Self {
+    pub(crate) fn new(provider: Arc<dyn DecisionProvider>, model: String) -> Self {
         Self { provider, model }
     }
 
