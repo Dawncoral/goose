@@ -160,16 +160,20 @@ async fn max_turns_counts_inference_calls_and_injects_budget() -> Result<()> {
 }
 
 #[tokio::test]
-async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() -> Result<()> {
+async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Result<()> {
     use std::sync::Arc;
 
     use goose_providers::api_client::{ApiClient, AuthMethod};
-    use goose_providers::thinking::ThinkingEffort;
+    use goose_providers::model::ModelConfig;
+    use goose_providers::thinking::{
+        ThinkingEffort, ThinkingEffortCapability, ThinkingEffortOption, ThinkingEffortSupport,
+    };
     use goose_providers::typesafe::TypeSafeProvider;
     use serde_json::json;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use crate::agents::agent::available_auto_efforts;
     use crate::agents::state_machine::AutoEffortOperation;
 
     let jev = MockServer::start().await;
@@ -198,6 +202,17 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
             .mount(&jev)
             .await;
     }
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(header("authorization", "Bearer test-key"))
+        .and(body_partial_json(json!({
+            "model": "test-effort-model",
+            "state": "fallback"
+        })))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&jev)
+        .await;
 
     let (pipeline, api) = test_pipeline().await?;
     let decision_provider = TypeSafeProvider::new(ApiClient::new_with_tls(
@@ -205,25 +220,48 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
         AuthMethod::BearerToken("test-key".to_string()),
         None,
     )?);
-    let pipeline =
-        pipeline
-            .record_model_configs()
-            .with_operation(Arc::new(AutoEffortOperation::new(
-                Arc::new(decision_provider),
-                "test-effort-model".to_string(),
-                vec![ThinkingEffort::Off, ThinkingEffort::High],
-            )));
+    let efforts = available_auto_efforts(
+        &ModelConfig::new("current"),
+        ThinkingEffortSupport::Options(ThinkingEffortCapability {
+            option_id: "effort".to_string(),
+            values: vec![
+                ThinkingEffortOption {
+                    value: "default".to_string(),
+                    label: "Default".to_string(),
+                },
+                ThinkingEffortOption {
+                    value: "high".to_string(),
+                    label: "High".to_string(),
+                },
+            ],
+            current: Some("default".to_string()),
+        }),
+    );
+    let pipeline = pipeline
+        .with_model_config(
+            ModelConfig::new(goose_providers::openai::OPEN_AI_DEFAULT_MODEL)
+                .with_canonical_limits("openai")
+                .with_thinking_effort(ThinkingEffort::Low),
+        )
+        .await
+        .record_model_configs()
+        .with_operation(Arc::new(AutoEffortOperation::new(
+            Arc::new(decision_provider),
+            "test-effort-model".to_string(),
+            efforts,
+        )));
     api.on("add one").call(ADD, value(1));
     api.on("result: 1").reply("The total is 1");
     api.on("hello").reply("hi there!");
+    api.on("fallback").reply("using configured effort");
 
-    let result = pipeline.run(["add one", "hello"]).await?;
+    let result = pipeline.run(["add one", "hello", "fallback"]).await?;
 
     let requests = jev
         .received_requests()
         .await
         .expect("requests should be recorded");
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     for request in requests {
         let body: serde_json::Value = serde_json::from_slice(&request.body)?;
         let criteria = body["questions"]["effort"]["criteria"]
@@ -256,6 +294,7 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
             Some(ThinkingEffort::High),
             Some(ThinkingEffort::High),
             Some(ThinkingEffort::Off),
+            Some(ThinkingEffort::Low),
         ]
     );
 
@@ -264,10 +303,11 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
         .iter()
         .filter_map(|message| message.metadata.operation_note("auto_effort", "decision"))
         .collect();
-    assert_eq!(decisions.len(), 2);
+    assert_eq!(decisions.len(), 3);
     assert_eq!(decisions[0]["effort"], "high");
     assert_eq!(decisions[0]["probabilities"]["high"], 0.9);
     assert_eq!(decisions[1]["effort"], "off");
+    assert!(decisions[2]["effort"].is_null());
 
     let logged_messages: Vec<_> = conversation
         .messages()
@@ -291,7 +331,7 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
             .model_config
             .as_ref()
             .and_then(|config| config.thinking_effort()),
-        Some(ThinkingEffort::Off)
+        Some(ThinkingEffort::Low)
     );
 
     Ok(())

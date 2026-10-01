@@ -17,6 +17,7 @@ use super::{
 use crate::session::Session;
 
 const DECISION: &str = "decision";
+const OPERATION: &str = "auto_effort";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct EffortDecision {
@@ -127,15 +128,26 @@ impl AutoEffortOperation {
     }
 }
 
+pub(super) fn current_turn_effort(conversation: &Conversation) -> Option<ThinkingEffort> {
+    let decision = messages_since_kickoff(conversation)
+        .ok()?
+        .first()?
+        .metadata
+        .operation_note(OPERATION, DECISION)?;
+    serde_json::from_value::<EffortDecision>(decision.clone())
+        .ok()?
+        .effort
+}
+
 #[async_trait]
 impl Operation<Session, GooseEffect> for AutoEffortOperation {
     fn name(&self) -> &'static str {
-        "auto_effort"
+        OPERATION
     }
 
     async fn run(
         &self,
-        session: &Session,
+        _session: &Session,
         conversation: &Conversation,
         emit: &Emitter,
     ) -> Result<OperationResult<GooseEffect>> {
@@ -170,14 +182,6 @@ impl Operation<Session, GooseEffect> for AutoEffortOperation {
         };
 
         let mut effects = Vec::new();
-        if let Some(effort) = decision.effort {
-            let model_config = session
-                .model_config
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("session has no model config"))?
-                .with_thinking_effort(effort);
-            effects.push(GooseEffect::SetModelConfig(model_config));
-        }
         let client_log = decision.effort.map(|effort| format!("thinking {effort}"));
         effects.push(
             ConversationEffect::SetMessageOperationNote {

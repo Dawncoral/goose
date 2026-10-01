@@ -100,6 +100,24 @@ const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 
+pub(super) fn available_auto_efforts(
+    model_config: &goose_providers::model::ModelConfig,
+    support: ThinkingEffortSupport,
+) -> Vec<ThinkingEffort> {
+    match support {
+        ThinkingEffortSupport::Unspecified if model_config.is_reasoning_model() => {
+            AUTO_EFFORTS.to_vec()
+        }
+        ThinkingEffortSupport::Options(capability) => AUTO_EFFORTS
+            .into_iter()
+            .filter(|effort| {
+                crate::acp::map_effort_value(&capability, &effort.to_string()).is_some()
+            })
+            .collect(),
+        ThinkingEffortSupport::Unspecified | ThinkingEffortSupport::Unsupported => Vec::new(),
+    }
+}
+
 fn provider_creation_error(error: anyhow::Error, context: impl fmt::Display) -> anyhow::Error {
     let message = format!("{context}: {error}");
     error.context(message)
@@ -1745,24 +1763,14 @@ impl Agent {
         operations.extend(remaining_operations);
         let auto_effort = (|| {
             let config = Config::global();
-            if !model_config.is_reasoning_model()
-                || !config
-                    .get_param::<bool>("GOOSE_AUTO_EFFORT_ENABLED")
-                    .unwrap_or(false)
+            if !config
+                .get_param::<bool>("GOOSE_AUTO_EFFORT_ENABLED")
+                .unwrap_or(false)
             {
                 return None;
             }
 
-            let efforts = match provider.thinking_effort_support() {
-                ThinkingEffortSupport::Unspecified => AUTO_EFFORTS.to_vec(),
-                ThinkingEffortSupport::Unsupported => return None,
-                ThinkingEffortSupport::Options(capability) => AUTO_EFFORTS
-                    .into_iter()
-                    .filter(|effort| {
-                        crate::acp::map_effort_value(&capability, &effort.to_string()).is_some()
-                    })
-                    .collect(),
-            };
+            let efforts = available_auto_efforts(&model_config, provider.thinking_effort_support());
             if efforts.is_empty() {
                 return None;
             }
