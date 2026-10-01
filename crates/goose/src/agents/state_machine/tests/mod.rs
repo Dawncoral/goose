@@ -280,7 +280,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         .collect();
     assert_eq!(
         events.len(),
-        2,
+        3,
         "one turn-context event per turn; the turn's second inference reuses it"
     );
     assert!(events.iter().all(|event| !event.is_user_visible()));
