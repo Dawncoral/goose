@@ -178,7 +178,10 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
         Mock::given(method("POST"))
             .and(path("/v1/systemone"))
             .and(header("authorization", "Bearer test-key"))
-            .and(body_partial_json(json!({ "state": request })))
+            .and(body_partial_json(json!({
+                "model": "test-effort-model",
+                "state": request
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "model": "jev-latest",
                 "answers": {
@@ -205,9 +208,10 @@ async fn turn_state_is_persisted_once_per_turn_and_reused_across_inferences() ->
     let pipeline =
         pipeline
             .record_model_configs()
-            .with_operation(Arc::new(AutoEffortOperation::new(Arc::new(
-                decision_provider,
-            ))));
+            .with_operation(Arc::new(AutoEffortOperation::new(
+                Arc::new(decision_provider),
+                "test-effort-model".to_string(),
+            )));
     api.on("add one").call(ADD, value(1));
     api.on("result: 1").reply("The total is 1");
     api.on("hello").reply("hi there!");

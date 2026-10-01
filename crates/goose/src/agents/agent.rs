@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use futures::stream::BoxStream;
@@ -71,9 +72,11 @@ use crate::session::{Session, SessionManager, SessionNameUpdate};
 use crate::tool_inspection::ToolInspectionManager;
 use crate::tool_monitor::RepetitionInspector;
 use crate::utils::is_token_cancelled;
+use goose_providers::api_client::{ApiClient, AuthMethod};
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::thinking::{ThinkingEffort, ThinkingEffortSupport};
+use goose_providers::typesafe::{TypeSafeProvider, TYPESAFE_DEFAULT_HOST, TYPESAFE_DEFAULT_MODEL};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ElicitationAction, ErrorCode, ErrorData,
     GetPromptResult, Prompt, Tool,
@@ -1733,7 +1736,39 @@ impl Agent {
             Arc::new(ExitOnErrorOperation),
         ];
         operations.extend(remaining_operations);
-        if let Some(auto_effort) = AutoEffortOperation::from_config(&model_config) {
+        let auto_effort = (|| {
+            let config = Config::global();
+            if !model_config.is_reasoning_model()
+                || !config
+                    .get_param::<bool>("GOOSE_AUTO_EFFORT_ENABLED")
+                    .unwrap_or(false)
+            {
+                return None;
+            }
+
+            let api_key = config
+                .get_secret::<String>("TYPESAFE_API_KEY")
+                .ok()?
+                .trim()
+                .to_string();
+            if api_key.is_empty() {
+                return None;
+            }
+
+            let tls_config = crate::config::tls::provider_tls_config_from_config(config).ok()?;
+            let api_client = ApiClient::with_timeout_and_tls(
+                TYPESAFE_DEFAULT_HOST.to_string(),
+                AuthMethod::BearerToken(api_key),
+                Duration::from_secs(2),
+                tls_config,
+            )
+            .ok()?;
+            Some(AutoEffortOperation::new(
+                Arc::new(TypeSafeProvider::new(api_client)),
+                TYPESAFE_DEFAULT_MODEL.to_string(),
+            ))
+        })();
+        if let Some(auto_effort) = auto_effort {
             operations.push(Arc::new(auto_effort));
         }
         let request_preparer = GooseInferenceRequestPreparer {

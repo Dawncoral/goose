@@ -1,24 +1,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use goose_providers::api_client::{ApiClient, AuthMethod};
 use goose_providers::conversation::{Conversation, EffectiveRole};
 use goose_providers::decision::{
     DecisionAnswer, DecisionProvider, DecisionQuestion, DecisionRequest,
 };
-use goose_providers::model::ModelConfig;
 use goose_providers::thinking::ThinkingEffort;
-use goose_providers::typesafe::{TypeSafeProvider, TYPESAFE_DEFAULT_HOST, TYPESAFE_DEFAULT_MODEL};
 use serde::{Deserialize, Serialize};
 
 use super::{
     applied, last_effective_role, messages_since_kickoff, not_applicable, ConversationEffect,
     Emitter, GooseEffect, Operation, OperationResult, CLIENT_LOG,
 };
-use crate::config::Config;
 use crate::session::Session;
 
 const DECISION: &str = "decision";
@@ -44,49 +39,19 @@ impl EffortDecision {
 
 pub struct AutoEffortOperation {
     provider: Arc<dyn DecisionProvider>,
+    model: String,
 }
 
 impl AutoEffortOperation {
-    pub(super) fn new(provider: Arc<dyn DecisionProvider>) -> Self {
-        Self { provider }
-    }
-
-    pub fn from_config(model_config: &ModelConfig) -> Option<Self> {
-        let config = Config::global();
-        if !model_config.is_reasoning_model()
-            || !config
-                .get_param::<bool>("GOOSE_AUTO_EFFORT_ENABLED")
-                .unwrap_or(false)
-        {
-            return None;
-        }
-
-        let api_key = config
-            .get_secret::<String>("TYPESAFE_API_KEY")
-            .ok()?
-            .trim()
-            .to_string();
-        if api_key.is_empty() {
-            return None;
-        }
-
-        let tls_config = crate::config::tls::provider_tls_config_from_config(config).ok()?;
-        let api_client = ApiClient::with_timeout_and_tls(
-            TYPESAFE_DEFAULT_HOST.to_string(),
-            AuthMethod::BearerToken(api_key),
-            Duration::from_secs(2),
-            tls_config,
-        )
-        .ok()?;
-
-        Some(Self::new(Arc::new(TypeSafeProvider::new(api_client))))
+    pub(super) fn new(provider: Arc<dyn DecisionProvider>, model: String) -> Self {
+        Self { provider, model }
     }
 
     async fn classify(&self, request: &str) -> Result<EffortDecision> {
         let mut response = self
             .provider
             .create_decision(&DecisionRequest {
-                model: TYPESAFE_DEFAULT_MODEL.to_string(),
+                model: self.model.clone(),
                 state: request.into(),
                 questions: HashMap::from([(
                     "effort".to_string(),
