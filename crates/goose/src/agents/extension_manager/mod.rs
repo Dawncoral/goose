@@ -597,26 +597,19 @@ impl ExtensionManager {
     pub async fn current_lease(
         &self,
         session_id: &str,
-        working_dir: Option<&Path>,
+        fallback_working_dir: Option<&Path>,
     ) -> ExtensionLease {
         let _guard = self.directory_lock.read().await;
-        self.lease_for_working_dir(session_id, working_dir).await
-    }
-
-    pub async fn current_session_lease(
-        &self,
-        session_id: &str,
-        fallback_working_dir: &Path,
-    ) -> ExtensionLease {
-        let _guard = self.directory_lock.read().await;
-        let working_dir = self
+        let working_dir = match self
             .context
             .session_manager
             .get_session(session_id, false)
             .await
-            .map(|session| session.working_dir)
-            .unwrap_or_else(|_| fallback_working_dir.to_path_buf());
-        self.lease_for_working_dir(session_id, Some(&working_dir))
+        {
+            Ok(session) => Some(session.working_dir),
+            Err(_) => fallback_working_dir.map(Path::to_path_buf),
+        };
+        self.lease_for_working_dir(session_id, working_dir.as_deref())
             .await
     }
 
@@ -1158,7 +1151,7 @@ impl ExtensionManager {
         tool_call: CallToolRequestParams,
         cancellation_token: CancellationToken,
     ) -> Result<ToolCallResult, ErrorData> {
-        self.lease_for_tool_call(ctx)
+        self.current_lease(&ctx.session_id, ctx.working_dir.as_deref())
             .await
             .call(tool_call, CallRequest::from(ctx), cancellation_token)
             .await
@@ -1171,7 +1164,7 @@ impl ExtensionManager {
         extension_name: &str,
         cancellation_token: CancellationToken,
     ) -> Result<ToolCallResult, ErrorData> {
-        self.lease_for_tool_call(ctx)
+        self.current_lease(&ctx.session_id, ctx.working_dir.as_deref())
             .await
             .call_for_app(
                 tool_call,
@@ -1180,16 +1173,6 @@ impl ExtensionManager {
                 cancellation_token,
             )
             .await
-    }
-
-    async fn lease_for_tool_call(&self, ctx: &ToolCallContext) -> ExtensionLease {
-        match ctx.working_dir.as_deref() {
-            Some(working_dir) => {
-                self.current_session_lease(&ctx.session_id, working_dir)
-                    .await
-            }
-            None => self.current_lease(&ctx.session_id, None).await,
-        }
     }
 
     pub async fn list_prompts_from_extension(
@@ -1924,7 +1907,7 @@ mod tests {
             );
         }
         let lease = manager
-            .current_session_lease(&session.id, old_working_dir.path())
+            .current_lease(&session.id, Some(old_working_dir.path()))
             .await;
         assert_eq!(lease.working_dir(), Some(new_working_dir.path()));
         assert!(lease.is_enabled("developer") && lease.is_enabled("external"));

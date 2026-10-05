@@ -1498,7 +1498,7 @@ impl Agent {
     ) -> Arc<ExtensionLease> {
         Arc::new(
             self.extension_manager
-                .current_session_lease(session_id, working_dir)
+                .current_lease(session_id, Some(working_dir))
                 .await,
         )
     }
