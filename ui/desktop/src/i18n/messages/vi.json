@@ -4698,7 +4698,7 @@
     "defaultMessage": "Lưu khóa"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Sử dụng Jev để chọn mức suy luận cho từng yêu cầu. Nội dung yêu cầu hiện tại được gửi đến TypeSafe AI."
+    "defaultMessage": "Sử dụng Jev để chọn mức suy luận cho từng yêu cầu. Nội dung được gửi đến TypeSafe AI; lệnh gạch chéo kỹ năng và công thức bao gồm hướng dẫn cục bộ đã mở rộng."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Mức suy luận tự động"

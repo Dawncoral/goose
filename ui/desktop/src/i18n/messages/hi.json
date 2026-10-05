@@ -4698,7 +4698,7 @@
     "defaultMessage": "कुंजी सहेजें"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "हर अनुरोध के लिए सोचने का स्तर चुनने हेतु Jev का उपयोग करता है। वर्तमान अनुरोध का पाठ TypeSafe AI को भेजा जाता है।"
+    "defaultMessage": "हर अनुरोध के लिए सोचने का स्तर चुनने हेतु Jev का उपयोग करता है। अनुरोध का पाठ TypeSafe AI को भेजा जाता है; स्किल और रेसिपी स्लैश कमांड में उनके विस्तारित स्थानीय निर्देश शामिल होते हैं।"
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "स्वचालित सोचने का स्तर"

@@ -38,7 +38,7 @@ const i18n = defineMessages({
   autoEffortDescription: {
     id: 'settings.agentLoop.operations.autoEffort.description',
     defaultMessage:
-      'Uses Jev to choose the thinking effort for each request. The current request text is sent to TypeSafe AI.',
+      'Uses Jev to choose the thinking effort for each request. Request text is sent to TypeSafe AI; skill and recipe slash commands include their expanded local instructions.',
   },
   typesafeApiKeyLabel: {
     id: 'settings.agentLoop.operations.autoEffort.apiKey.label',
@@ -276,7 +276,9 @@ export default function AgentLoopSettings() {
         setEnabled(!useLegacyAgentLoop);
         setSlashCommandsEnabled(typeof slashCommands === 'boolean' ? slashCommands : true);
         setAutoEffortEnabled(typeof autoEffort === 'boolean' ? autoEffort : false);
-        setTypesafeApiKeyConfigured(typeof typesafeApiKey === 'string' && typesafeApiKey.length > 0);
+        setTypesafeApiKeyConfigured(
+          typeof typesafeApiKey === 'string' && typesafeApiKey.length > 0
+        );
         setToolPairCompactionEnabled(
           typeof toolPairCompaction === 'boolean' ? toolPairCompaction : false
         );

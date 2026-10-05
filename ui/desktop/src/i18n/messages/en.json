@@ -3999,7 +3999,7 @@
     "defaultMessage": "Save key"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Uses Jev to choose the thinking effort for each request. The current request text is sent to TypeSafe AI."
+    "defaultMessage": "Uses Jev to choose the thinking effort for each request. Request text is sent to TypeSafe AI; skill and recipe slash commands include their expanded local instructions."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Automatic thinking effort"

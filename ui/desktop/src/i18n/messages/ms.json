@@ -4698,7 +4698,7 @@
     "defaultMessage": "Simpan kunci"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Menggunakan Jev untuk memilih tahap pemikiran bagi setiap permintaan. Teks permintaan semasa dihantar kepada TypeSafe AI."
+    "defaultMessage": "Menggunakan Jev untuk memilih tahap pemikiran bagi setiap permintaan. Teks permintaan dihantar kepada TypeSafe AI; perintah garis miring kemahiran dan resipi menyertakan arahan tempatan yang telah dikembangkan."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Tahap pemikiran automatik"

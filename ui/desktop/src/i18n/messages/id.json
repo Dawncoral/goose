@@ -4698,7 +4698,7 @@
     "defaultMessage": "Simpan kunci"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Menggunakan Jev untuk memilih tingkat penalaran bagi setiap permintaan. Teks permintaan saat ini dikirim ke TypeSafe AI."
+    "defaultMessage": "Menggunakan Jev untuk memilih tingkat penalaran bagi setiap permintaan. Teks permintaan dikirim ke TypeSafe AI; perintah garis miring skill dan resep menyertakan instruksi lokal yang telah diperluas."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Tingkat penalaran otomatis"

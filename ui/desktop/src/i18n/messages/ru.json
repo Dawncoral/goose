@@ -4698,7 +4698,7 @@
     "defaultMessage": "Сохранить ключ"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Использует Jev для выбора уровня рассуждений для каждого запроса. Текст текущего запроса отправляется в TypeSafe AI."
+    "defaultMessage": "Использует Jev для выбора уровня рассуждений для каждого запроса. Текст отправляется в TypeSafe AI; слеш-команды навыков и рецептов включают их развёрнутые локальные инструкции."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Автоматический уровень рассуждений"

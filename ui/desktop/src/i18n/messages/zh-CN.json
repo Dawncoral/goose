@@ -4698,7 +4698,7 @@
     "defaultMessage": "保存密钥"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "使用 Jev 为每个请求选择思考级别。当前请求文本将发送给 TypeSafe AI。"
+    "defaultMessage": "使用 Jev 为每个请求选择思考级别。请求文本会发送给 TypeSafe AI；技能和配方斜杠命令会包含展开后的本地指令。"
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "自动思考级别"

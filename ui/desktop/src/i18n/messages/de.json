@@ -4698,7 +4698,7 @@
     "defaultMessage": "Schlüssel speichern"
   },
   "settings.agentLoop.operations.autoEffort.description": {
-    "defaultMessage": "Verwendet Jev, um den Denkaufwand für jede Anfrage auszuwählen. Der Text der aktuellen Anfrage wird an TypeSafe AI gesendet."
+    "defaultMessage": "Verwendet Jev, um den Denkaufwand für jede Anfrage auszuwählen. Anfragetext wird an TypeSafe AI gesendet; Slash-Befehle für Skills und Rezepte enthalten deren erweiterte lokale Anweisungen."
   },
   "settings.agentLoop.operations.autoEffort.title": {
     "defaultMessage": "Automatischer Denkaufwand"
