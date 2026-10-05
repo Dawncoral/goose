@@ -1,10 +1,7 @@
-use anyhow::Result;
 use chrono::{DateTime, Utc};
-use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
 use futures::Stream;
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,10 +15,9 @@ use tracing::warn;
 
 use super::container::Container;
 use super::extension::{
-    ExtensionConfig, ExtensionError, ExtensionInfo, ExtensionResult, PlatformExtensionContext,
-    PLATFORM_EXTENSIONS,
+    ExtensionConfig, ExtensionError, ExtensionResult, PlatformExtensionContext, PLATFORM_EXTENSIONS,
 };
-use super::tool_execution::{ToolCallContext, ToolCallResult};
+use super::tool_execution::ToolCallResult;
 use super::types::SharedProvider;
 use crate::action_required_manager::ActionRequiredManager;
 use crate::agents::mcp_client::{
@@ -31,10 +27,7 @@ use crate::config::extensions::name_to_key;
 use crate::config::{get_extension_by_name, Config};
 use crate::oauth::GooseCredentialStore;
 use crate::session::{EnabledExtensionsState, ExtensionState, Session};
-use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, ErrorData, GetPromptResult,
-    ListResourcesResult, ListToolsResult, MetaObject, Prompt, Resource, ServerConfig, Tool,
-};
+use rmcp::model::{CallToolResult, ErrorCode, ErrorData, MetaObject, ServerConfig, Tool};
 use serde_json::Value;
 
 mod builtin;
@@ -921,14 +914,6 @@ impl ExtensionManager {
         Self::invalidate_extension_manager_tools(&extensions);
     }
 
-    /// Get extensions info for building the system prompt
-    pub async fn get_extensions_info(&self, working_dir: &Path) -> Vec<ExtensionInfo> {
-        self.current_lease("", Some(working_dir))
-            .await
-            .instructions()
-            .await
-    }
-
     pub async fn remove_extension(&self, name: &str) -> ExtensionResult<()> {
         let sanitized_name = name_to_key(name);
         self.remove_extension_by_key(&sanitized_name).await?;
@@ -1009,277 +994,6 @@ impl ExtensionManager {
             .map(|ext| ext.config.clone())
             .collect()
     }
-
-    /// Get all tools from all clients with proper prefixing
-    pub async fn get_prefixed_tools(
-        &self,
-        session_id: &str,
-        extension_name: Option<String>,
-    ) -> ExtensionResult<Vec<Tool>> {
-        let lease = self.current_lease(session_id, None).await;
-        Ok(match extension_name {
-            Some(name) => lease.tools_for(&name).await,
-            None => lease.tools().await,
-        })
-    }
-
-    pub async fn list_tools_from_extension(
-        &self,
-        session_id: &str,
-        extension_name: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<ListToolsResult, ErrorData> {
-        let client = self
-            .get_server_client(extension_name)
-            .await
-            .ok_or_else(|| {
-                ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    format!("Extension {} is not valid", extension_name),
-                    None,
-                )
-            })?;
-
-        client
-            .list_tools(session_id, None, cancellation_token)
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Unable to list tools for {}, {:?}", extension_name, e),
-                    None,
-                )
-            })
-    }
-
-    pub async fn get_prefixed_tools_excluding(
-        &self,
-        session_id: &str,
-        exclude: &str,
-    ) -> ExtensionResult<Vec<Tool>> {
-        let lease = self.current_lease(session_id, None).await;
-        Ok(lease.tools_excluding(exclude).await)
-    }
-
-    pub async fn read_resource_tool(
-        &self,
-        session_id: &str,
-        params: Value,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<ContentBlock>, ErrorData> {
-        self.current_lease(session_id, None)
-            .await
-            .read_resource_tool(params, cancellation_token)
-            .await
-    }
-
-    pub async fn read_resource(
-        &self,
-        session_id: &str,
-        uri: &str,
-        extension_name: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<rmcp::model::ReadResourceResult, ErrorData> {
-        self.current_lease(session_id, None)
-            .await
-            .read_resource(uri, extension_name, cancellation_token)
-            .await
-    }
-
-    pub async fn get_ui_resources(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<(String, Resource)>, ErrorData> {
-        let mut ui_resources = Vec::new();
-
-        let extensions_to_check: Vec<(String, McpClientBox)> = {
-            let extensions = self.extensions.lock().await;
-            extensions
-                .iter()
-                .map(|(name, ext)| (name.clone(), ext.client.clone()))
-                .collect()
-        };
-
-        for (extension_name, client) in extensions_to_check {
-            match client
-                .list_resources(session_id, None, CancellationToken::default())
-                .await
-            {
-                Ok(list_response) => {
-                    for resource in list_response.resources {
-                        if resource.uri.starts_with("ui://") {
-                            ui_resources.push((extension_name.clone(), resource));
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to list resources for {}: {:?}", extension_name, e);
-                }
-            }
-        }
-
-        Ok(ui_resources)
-    }
-
-    pub async fn list_resources_result_from_extension(
-        &self,
-        session_id: &str,
-        extension_name: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<ListResourcesResult, ErrorData> {
-        self.current_lease(session_id, None)
-            .await
-            .list_resources_result_from_extension(extension_name, cancellation_token)
-            .await
-    }
-
-    pub async fn list_resources(
-        &self,
-        session_id: &str,
-        params: Value,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<ContentBlock>, ErrorData> {
-        self.current_lease(session_id, None)
-            .await
-            .list_resources(params, cancellation_token)
-            .await
-    }
-
-    pub async fn dispatch_tool_call(
-        &self,
-        ctx: &ToolCallContext,
-        tool_call: CallToolRequestParams,
-        cancellation_token: CancellationToken,
-    ) -> Result<ToolCallResult, ErrorData> {
-        self.current_lease(&ctx.session_id, ctx.working_dir.as_deref())
-            .await
-            .call(tool_call, CallRequest::from(ctx), cancellation_token)
-            .await
-    }
-
-    pub async fn dispatch_app_tool_call(
-        &self,
-        ctx: &ToolCallContext,
-        tool_call: CallToolRequestParams,
-        extension_name: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<ToolCallResult, ErrorData> {
-        self.current_lease(&ctx.session_id, ctx.working_dir.as_deref())
-            .await
-            .call_for_app(
-                tool_call,
-                extension_name,
-                CallRequest::from(ctx),
-                cancellation_token,
-            )
-            .await
-    }
-
-    pub async fn list_prompts_from_extension(
-        &self,
-        session_id: &str,
-        extension_name: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<Prompt>, ErrorData> {
-        let client = self
-            .get_server_client(extension_name)
-            .await
-            .ok_or_else(|| {
-                ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    format!("Extension {} is not valid", extension_name),
-                    None,
-                )
-            })?;
-
-        client
-            .list_prompts(session_id, None, cancellation_token)
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Unable to list prompts for {}, {:?}", extension_name, e),
-                    None,
-                )
-            })
-            .map(|lp| lp.prompts)
-    }
-
-    pub async fn list_prompts(
-        &self,
-        session_id: &str,
-        cancellation_token: CancellationToken,
-    ) -> Result<HashMap<String, Vec<Prompt>>, ErrorData> {
-        let mut futures = FuturesUnordered::new();
-
-        let names: Vec<_> = self.extensions.lock().await.keys().cloned().collect();
-        for extension_name in names {
-            let token = cancellation_token.clone();
-            futures.push(async move {
-                (
-                    extension_name.clone(),
-                    self.list_prompts_from_extension(session_id, extension_name.as_str(), token)
-                        .await,
-                )
-            });
-        }
-
-        let mut all_prompts = HashMap::new();
-        let mut errors = Vec::new();
-
-        // Process results as they complete
-        while let Some(result) = futures.next().await {
-            let (name, prompts) = result;
-            match prompts {
-                Ok(content) => {
-                    all_prompts.insert(name.to_string(), content);
-                }
-                Err(tool_error) => {
-                    errors.push(tool_error);
-                }
-            }
-        }
-
-        if !errors.is_empty() {
-            tracing::debug!(
-                errors = ?errors
-                    .into_iter()
-                    .map(|e| format!("{:?}", e))
-                    .collect::<Vec<_>>(),
-                "errors from listing prompts"
-            );
-        }
-
-        Ok(all_prompts)
-    }
-
-    pub async fn get_prompt(
-        &self,
-        session_id: &str,
-        extension_name: &str,
-        name: &str,
-        arguments: Value,
-        cancellation_token: CancellationToken,
-    ) -> Result<GetPromptResult> {
-        let client = self
-            .get_server_client(extension_name)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Extension {} not found", extension_name))?;
-
-        client
-            .get_prompt(session_id, name, arguments, cancellation_token)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get prompt: {}", e))
-    }
-
-    async fn get_server_client(&self, name: impl Into<String>) -> Option<McpClientBox> {
-        let normalized = name_to_key(&name.into());
-        self.extensions
-            .lock()
-            .await
-            .get(&normalized)
-            .map(|ext| ext.client.clone())
-    }
 }
 
 #[cfg(test)]
@@ -1295,7 +1009,9 @@ mod tests {
     use rmcp::model::ReadResourceResult;
     use rmcp::model::ServerNotification;
 
-    use super::super::tool_execution::ToolCallNotificationEmitter;
+    use super::super::tool_execution::{ToolCallContext, ToolCallNotificationEmitter};
+    use futures::StreamExt;
+    use rmcp::model::{CallToolRequestParams, GetPromptResult, Resource};
     use std::sync::atomic::AtomicUsize;
     use tokio::sync::{mpsc, Semaphore};
 
@@ -1552,7 +1268,13 @@ mod tests {
         let tool_call = CallToolRequestParams::new("notifications__tool".to_string())
             .with_arguments(object!({}));
         let dispatched = extension_manager
-            .dispatch_tool_call(&ctx, tool_call, CancellationToken::default())
+            .current_lease(&ctx.session_id, ctx.working_dir.as_deref())
+            .await
+            .call(
+                tool_call,
+                CallRequest::from(&ctx),
+                CancellationToken::default(),
+            )
             .await
             .expect("tool call should dispatch");
 
@@ -1609,7 +1331,13 @@ mod tests {
             .with_arguments(object!({}));
 
         let dispatched = extension_manager
-            .dispatch_tool_call(&ctx, tool_call, CancellationToken::default())
+            .current_lease(&ctx.session_id, ctx.working_dir.as_deref())
+            .await
+            .call(
+                tool_call,
+                CallRequest::from(&ctx),
+                CancellationToken::default(),
+            )
             .await
             .expect("tool call should dispatch");
         assert!(dispatched.result.await.is_ok());
@@ -1755,10 +1483,12 @@ mod tests {
 
         let ctx = ToolCallContext::new("session".to_string(), None, None);
         let result = extension_manager
-            .dispatch_app_tool_call(
-                &ctx,
+            .current_lease(&ctx.session_id, ctx.working_dir.as_deref())
+            .await
+            .call_for_app(
                 CallToolRequestParams::new("ext_a__ext_b__secret".to_string()),
                 other,
+                CallRequest::from(&ctx),
                 CancellationToken::default(),
             )
             .await;
@@ -1993,9 +1723,10 @@ mod tests {
             .unwrap();
 
         let tools = extension_manager
-            .get_prefixed_tools("session", Some("extensionmanager".to_string()))
+            .current_lease("session", None)
             .await
-            .unwrap();
+            .tools_for("extensionmanager")
+            .await;
         assert!(tools
             .iter()
             .all(|tool| tool.name != "extensionmanager__list_resources"));
@@ -2014,9 +1745,10 @@ mod tests {
             .await;
 
         let tools = extension_manager
-            .get_prefixed_tools("session", Some("extensionmanager".to_string()))
+            .current_lease("session", None)
             .await
-            .unwrap();
+            .tools_for("extensionmanager")
+            .await;
         assert!(tools
             .iter()
             .any(|tool| tool.name == "extensionmanager__list_resources"));
@@ -2026,9 +1758,10 @@ mod tests {
             .await
             .unwrap();
         let tools = extension_manager
-            .get_prefixed_tools("session", Some("extensionmanager".to_string()))
+            .current_lease("session", None)
             .await
-            .unwrap();
+            .tools_for("extensionmanager")
+            .await;
         assert!(tools
             .iter()
             .all(|tool| tool.name != "extensionmanager__list_resources"));
@@ -2145,9 +1878,10 @@ mod tests {
             let manager = manager.clone();
             tokio::spawn(async move {
                 manager
-                    .get_prefixed_tools("test-session", None)
+                    .current_lease("test-session", None)
                     .await
-                    .unwrap()
+                    .tools()
+                    .await
             })
         };
 
@@ -2159,9 +1893,10 @@ mod tests {
         assert!(stale_result.iter().any(|tool| tool.name == "dynamic__old"));
 
         let refreshed = manager
-            .get_prefixed_tools("test-session", None)
+            .current_lease("test-session", None)
             .await
-            .unwrap();
+            .tools()
+            .await;
         assert!(refreshed.iter().any(|tool| tool.name == "dynamic__new"));
         assert_eq!(tools_client.calls.load(Ordering::SeqCst), 2);
     }

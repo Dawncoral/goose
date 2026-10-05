@@ -1505,11 +1505,11 @@ impl Agent {
 
     pub async fn list_tools(&self, session_id: &str, extension_name: Option<String>) -> Vec<Tool> {
         let include_final_output = extension_name.is_none();
-        let mut prefixed_tools = self
-            .extension_manager
-            .get_prefixed_tools(session_id, extension_name)
-            .await
-            .unwrap_or_default();
+        let lease = self.extension_manager.current_lease(session_id, None).await;
+        let mut prefixed_tools = match extension_name {
+            Some(name) => lease.tools_for(&name).await,
+            None => lease.tools().await,
+        };
 
         if include_final_output {
             if let Some(final_output_tool) = self.final_output_tool.lock().await.as_ref() {
@@ -3989,9 +3989,10 @@ impl Agent {
 
     pub async fn list_extension_prompts(&self, session_id: &str) -> HashMap<String, Vec<Prompt>> {
         self.extension_manager
-            .list_prompts(session_id, CancellationToken::default())
+            .current_lease(session_id, None)
             .await
-            .expect("Failed to list prompts")
+            .list_prompts(CancellationToken::default())
+            .await
     }
 
     pub async fn get_prompt(
@@ -4000,29 +4001,17 @@ impl Agent {
         name: &str,
         arguments: Value,
     ) -> Result<GetPromptResult> {
-        // First find which extension has this prompt
-        let prompts = self
-            .extension_manager
-            .list_prompts(session_id, CancellationToken::default())
-            .await
-            .map_err(|e| anyhow!("Failed to list prompts: {}", e))?;
+        let lease = self.extension_manager.current_lease(session_id, None).await;
+        let prompts = lease.list_prompts(CancellationToken::default()).await;
 
         if let Some(extension) = prompts
             .iter()
             .find(|(_, prompt_list)| prompt_list.iter().any(|p| p.name == name))
             .map(|(extension, _)| extension)
         {
-            return self
-                .extension_manager
-                .get_prompt(
-                    session_id,
-                    extension,
-                    name,
-                    arguments,
-                    CancellationToken::default(),
-                )
-                .await
-                .map_err(|e| anyhow!("Failed to get prompt: {}", e));
+            return lease
+                .get_prompt(extension, name, arguments, CancellationToken::default())
+                .await;
         }
 
         Err(anyhow!("Prompt '{}' not found", name))

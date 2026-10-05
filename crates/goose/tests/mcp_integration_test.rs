@@ -936,7 +936,13 @@ async fn test_replayed_session(
                 Some("test-id".to_string()),
             );
             let result = extension_manager
-                .dispatch_tool_call(&ctx, tool_call, CancellationToken::default())
+                .current_lease(&ctx.session_id, ctx.working_dir.as_deref())
+                .await
+                .call(
+                    tool_call,
+                    CallRequest::from(&ctx),
+                    CancellationToken::default(),
+                )
                 .await;
 
             let tool_result = result?;

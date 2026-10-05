@@ -476,21 +476,11 @@ impl<'a> ToolExecutionOperation<'a> {
         conversation: &Conversation,
         emit: &Emitter,
     ) -> Result<OperationResult<GooseEffect>> {
-        let prompts = match self
-            .extension_manager
-            .list_prompts(&session.id, emit.cancel_token().clone())
+        let prompts = self
+            .lease(session)
             .await
-        {
-            Ok(prompts) => prompts,
-            Err(error) => {
-                return Self::command_response(
-                    conversation,
-                    format!("Failed to list prompts: {}", error.message),
-                    emit,
-                )
-                .await;
-            }
-        };
+            .list_prompts(emit.cancel_token().clone())
+            .await;
         let extension_filter = command.params_str.split_whitespace().next();
         if let Some(filter) = extension_filter {
             if !prompts.contains_key(filter) {
@@ -539,21 +529,11 @@ impl<'a> ToolExecutionOperation<'a> {
             )
             .await;
         };
-        let prompts = match self
-            .extension_manager
-            .list_prompts(&session.id, emit.cancel_token().clone())
+        let prompts = self
+            .lease(session)
             .await
-        {
-            Ok(prompts) => prompts,
-            Err(error) => {
-                return Self::command_response(
-                    conversation,
-                    format!("Failed to list prompts: {}", error.message),
-                    emit,
-                )
-                .await;
-            }
-        };
+            .list_prompts(emit.cancel_token().clone())
+            .await;
         let found = prompts.iter().find_map(|(extension, prompts)| {
             prompts
                 .iter()
@@ -595,9 +575,9 @@ impl<'a> ToolExecutionOperation<'a> {
             .map(|(key, value)| (key.to_string(), value.trim_matches('"').to_string()))
             .collect();
         let result = match self
-            .extension_manager
+            .lease(session)
+            .await
             .get_prompt(
-                &session.id,
                 &extension,
                 prompt_name,
                 serde_json::to_value(arguments)?,
