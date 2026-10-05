@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use goose_providers::conversation::{Conversation, EffectiveRole};
+use goose_providers::conversation::{effective_role, Conversation, EffectiveRole};
 use goose_providers::decision::{
     DecisionAnswer, DecisionProvider, DecisionQuestion, DecisionRequest,
 };
@@ -162,7 +162,16 @@ impl Operation<Session, GooseEffect> for AutoEffortOperation {
             return not_applicable();
         }
 
-        let request = kickoff.user_visible_content().as_concat_text();
+        let request = messages
+            .iter()
+            .rev()
+            .filter(|message| message.is_agent_visible())
+            .find_map(|message| {
+                let message = message.agent_visible_content();
+                matches!(effective_role(&message), EffectiveRole::User)
+                    .then(|| message.as_concat_text())
+            })
+            .unwrap_or_default();
         if request.trim().is_empty() {
             return not_applicable();
         }

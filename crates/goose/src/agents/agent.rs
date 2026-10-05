@@ -2073,6 +2073,31 @@ impl Agent {
             .ok_or_else(|| anyhow!("Provider not set"))?;
         let model_config = self.effective_model_config_for_session(&session_id).await?;
 
+        let session = session_manager.get_session(&session_id, true).await?;
+        let saved_provider_session_id = session
+            .conversation
+            .as_ref()
+            .and_then(|conversation| {
+                super::latest_provider_session_id(conversation.messages(), provider.get_name())
+            })
+            .map(str::to_string);
+        if let Some(saved_provider_session_id) = saved_provider_session_id {
+            if let Err(error) = provider.resume(&saved_provider_session_id).await {
+                warn!(
+                    provider = provider.get_name(),
+                    %error,
+                    "Could not resume provider session; continuing with a handoff"
+                );
+            }
+        }
+        if let Err(error) = provider.apply_model_selection(&model_config).await {
+            warn!(
+                provider = provider.get_name(),
+                %error,
+                "Could not apply model selection before building state machine"
+            );
+        }
+
         let context_limit =
             crate::context_limit::get_context_limit(provider.as_ref(), &model_config.model_name)
                 .await?;

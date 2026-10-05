@@ -176,8 +176,27 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
     use crate::agents::agent::available_auto_efforts;
     use crate::agents::state_machine::AutoEffortOperation;
 
+    let (pipeline, api) = test_pipeline().await?;
+    let skill_dir = pipeline
+        .working_dir()
+        .join(".agents/skills/auto-effort-review");
+    std::fs::create_dir_all(&skill_dir)?;
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: auto-effort-review\ndescription: Review helper\n---\nReview the expanded request carefully.\n",
+    )?;
+    let skill = crate::skills::list_installed_skills(Some(pipeline.working_dir()))
+        .into_iter()
+        .find(|skill| skill.name == "auto-effort-review")
+        .expect("project skill should be installed");
+    let expanded_skill_prompt = crate::skills::loaded_skill_context_with_args(&skill, None)?;
+
     let jev = MockServer::start().await;
-    for (request, effort) in [("add one", "high"), ("hello", "off")] {
+    for (request, effort) in [
+        ("add one", "high"),
+        (expanded_skill_prompt.as_str(), "high"),
+        ("hello", "off"),
+    ] {
         let probabilities = std::collections::HashMap::from([(effort, 0.9)]);
         Mock::given(method("POST"))
             .and(path("/v1/systemone"))
@@ -214,7 +233,6 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         .mount(&jev)
         .await;
 
-    let (pipeline, api) = test_pipeline().await?;
     let decision_provider = TypeSafeProvider::new(ApiClient::new_with_tls(
         jev.uri(),
         AuthMethod::BearerToken("test-key".to_string()),
@@ -252,16 +270,20 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         )));
     api.on("add one").call(ADD, value(1));
     api.on("result: 1").reply("The total is 1");
+    api.on("Review the expanded request carefully")
+        .reply("reviewed");
     api.on("hello").reply("hi there!");
     api.on("fallback").reply("using configured effort");
 
-    let result = pipeline.run(["add one", "hello", "fallback"]).await?;
+    let result = pipeline
+        .run(["add one", "/auto-effort-review", "hello", "fallback"])
+        .await?;
 
     let requests = jev
         .received_requests()
         .await
         .expect("requests should be recorded");
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
     for request in requests {
         let body: serde_json::Value = serde_json::from_slice(&request.body)?;
         let criteria = body["questions"]["effort"]["criteria"]
@@ -280,7 +302,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         .collect();
     assert_eq!(
         events.len(),
-        3,
+        4,
         "one turn-context event per turn; the turn's second inference reuses it"
     );
     assert!(events.iter().all(|event| !event.is_user_visible()));
@@ -293,6 +315,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         vec![
             Some(ThinkingEffort::High),
             Some(ThinkingEffort::High),
+            Some(ThinkingEffort::High),
             Some(ThinkingEffort::Off),
             Some(ThinkingEffort::Low),
         ]
@@ -303,28 +326,34 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         .iter()
         .filter_map(|message| message.metadata.operation_note("auto_effort", "decision"))
         .collect();
-    assert_eq!(decisions.len(), 3);
+    assert_eq!(decisions.len(), 4);
     assert_eq!(decisions[0]["effort"], "high");
     assert_eq!(decisions[0]["probabilities"]["high"], 0.9);
-    assert_eq!(decisions[1]["effort"], "off");
-    assert!(decisions[2]["effort"].is_null());
+    assert_eq!(decisions[1]["effort"], "high");
+    assert_eq!(decisions[2]["effort"], "off");
+    assert!(decisions[3]["effort"].is_null());
 
     let logged_messages: Vec<_> = conversation
         .messages()
         .iter()
         .filter(|message| !message.metadata.operation_logs.is_empty())
         .collect();
-    assert_eq!(logged_messages.len(), 2);
+    assert_eq!(logged_messages.len(), 3);
     assert_eq!(
         logged_messages[0].metadata.operation_logs,
         ["ops_auto_effort: thinking high"]
     );
     assert_eq!(
         logged_messages[1].metadata.operation_logs,
+        ["ops_auto_effort: thinking high"]
+    );
+    assert_eq!(
+        logged_messages[2].metadata.operation_logs,
         ["ops_auto_effort: thinking off"]
     );
     assert!(logged_messages[0].is_tool_call());
-    assert_eq!(logged_messages[1].as_concat_text(), "hi there!");
+    assert_eq!(logged_messages[1].as_concat_text(), "reviewed");
+    assert_eq!(logged_messages[2].as_concat_text(), "hi there!");
     assert_eq!(
         result
             .session
