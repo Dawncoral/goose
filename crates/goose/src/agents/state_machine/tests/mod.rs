@@ -239,6 +239,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         None,
     )?);
     let efforts = available_auto_efforts(
+        "claude-acp",
         &ModelConfig::new("current"),
         ThinkingEffortSupport::Options(ThinkingEffortCapability {
             option_id: "effort".to_string(),
@@ -254,6 +255,27 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
             ],
             current: Some("default".to_string()),
         }),
+    );
+    assert_eq!(
+        available_auto_efforts(
+            "openai",
+            &ModelConfig::new("gpt-5-pro"),
+            ThinkingEffortSupport::Unspecified,
+        ),
+        vec![ThinkingEffort::High]
+    );
+    assert_eq!(
+        available_auto_efforts(
+            "anthropic",
+            &ModelConfig::new("claude-opus-5-5").with_canonical_limits("anthropic"),
+            ThinkingEffortSupport::Unspecified,
+        ),
+        vec![
+            ThinkingEffort::Low,
+            ThinkingEffort::Medium,
+            ThinkingEffort::High,
+            ThinkingEffort::Max,
+        ]
     );
     let pipeline = pipeline
         .with_model_config(

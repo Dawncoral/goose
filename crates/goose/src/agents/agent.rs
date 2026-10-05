@@ -102,12 +102,72 @@ const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 
 pub(super) fn available_auto_efforts(
+    provider_name: &str,
     model_config: &goose_providers::model::ModelConfig,
     support: ThinkingEffortSupport,
 ) -> Vec<ThinkingEffort> {
+    let applied_as_selected = |effort: &ThinkingEffort, applied: Option<String>| match effort {
+        ThinkingEffort::Off => applied.as_deref() == Some("none"),
+        ThinkingEffort::Low => applied.as_deref() == Some("low"),
+        ThinkingEffort::Medium => applied.as_deref() == Some("medium"),
+        ThinkingEffort::High => applied.as_deref() == Some("high"),
+        ThinkingEffort::Max => matches!(applied.as_deref(), Some("xhigh" | "max")),
+    };
+
     match support {
         ThinkingEffortSupport::Unspecified if model_config.is_reasoning_model() => {
-            AUTO_EFFORTS.to_vec()
+            if model_config.is_openai_reasoning_model() {
+                return AUTO_EFFORTS
+                    .into_iter()
+                    .filter(|effort| {
+                        applied_as_selected(
+                            effort,
+                            goose_providers::formats::openai::openai_reasoning_effort_for_thinking(
+                                &model_config.model_name,
+                                *effort,
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+
+            if goose_providers::formats::openai::supports_xai_reasoning_effort(
+                &model_config.model_name,
+            ) {
+                return AUTO_EFFORTS
+                    .into_iter()
+                    .filter(|effort| {
+                        applied_as_selected(
+                            effort,
+                            goose_providers::formats::openai::xai_reasoning_effort_for_thinking(
+                                &model_config.model_name,
+                                *effort,
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+
+            if model_config.is_glm_5_3_reasoning_model()
+                || model_config.is_kimi_k3_reasoning_model()
+            {
+                return vec![
+                    ThinkingEffort::Low,
+                    ThinkingEffort::High,
+                    ThinkingEffort::Max,
+                ];
+            }
+
+            let always_on = goose_providers::canonical::maybe_get_canonical_model(
+                provider_name,
+                &model_config.model_name,
+            )
+            .and_then(|model| model.thinking_mode)
+                == Some(goose_providers::canonical::ThinkingMode::AlwaysOnAdaptive);
+            AUTO_EFFORTS
+                .into_iter()
+                .filter(|effort| !always_on || *effort != ThinkingEffort::Off)
+                .collect()
         }
         ThinkingEffortSupport::Options(capability) => AUTO_EFFORTS
             .into_iter()
@@ -1829,7 +1889,11 @@ impl Agent {
                 return None;
             }
 
-            let efforts = available_auto_efforts(&model_config, provider.thinking_effort_support());
+            let efforts = available_auto_efforts(
+                provider.get_name(),
+                &model_config,
+                provider.thinking_effort_support(),
+            );
             if efforts.is_empty() {
                 return None;
             }
