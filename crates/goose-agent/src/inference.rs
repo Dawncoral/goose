@@ -32,6 +32,10 @@ pub struct PreparedInferenceRequest {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait InferenceRequestPreparer<S>: MaybeSend + MaybeSync {
+    async fn prepare_session(&self, _session: &S) -> Result<Option<S>> {
+        Ok(None)
+    }
+
     async fn prepare(
         &self,
         session: &S,
@@ -404,6 +408,10 @@ impl<S: MachineSession, E: InferenceEffect> Inference<S, E> for InferenceRunner<
             return false;
         };
         trailing_error(conversation).is_none() && should_infer(conversation, turn)
+    }
+
+    async fn prepare_session(&self, session: &S) -> Result<Option<S>> {
+        self.request_preparer.prepare_session(session).await
     }
 
     async fn infer(

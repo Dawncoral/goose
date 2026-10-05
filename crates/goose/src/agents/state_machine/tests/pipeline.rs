@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Result;
 use rmcp::model::ElicitationAction;
@@ -11,7 +11,9 @@ use super::calculator_extension::CalculatorExtension;
 use super::dummy_api::{DummyApi, ProviderFeatures};
 use crate::action_required_manager::ElicitationOutcome;
 use crate::agents::extension::ExtensionConfig;
-use crate::agents::extension_manager::{ExtensionManager, ExtensionManagerCapabilities};
+use crate::agents::extension_manager::{
+    ExtensionLease, ExtensionManager, ExtensionManagerCapabilities,
+};
 use crate::agents::mcp_client::McpClientTrait;
 use crate::agents::prompt_manager::PromptManager;
 use crate::agents::state_machine::{
@@ -45,7 +47,7 @@ struct FeatureProvider {
 
 struct RecordingProvider {
     inner: Arc<dyn Provider>,
-    model_configs: Arc<Mutex<Vec<ModelConfig>>>,
+    model_configs: Arc<StdMutex<Vec<ModelConfig>>>,
 }
 
 #[async_trait::async_trait]
@@ -142,6 +144,7 @@ pub(super) struct TestPipeline {
     provider: Arc<dyn Provider>,
     model_config: ModelConfig,
     extension_manager: Arc<ExtensionManager>,
+    extension_lease: Arc<StdMutex<Option<Arc<ExtensionLease>>>>,
     goose_mode: TokioMutex<GooseMode>,
     prompt_manager: TokioMutex<PromptManager>,
     tool_inspection_manager: ToolInspectionManager,
@@ -157,7 +160,7 @@ pub(super) struct TestPipeline {
     max_turns: u32,
     scheduler: Option<Arc<crate::scheduler::Scheduler>>,
     extra_operations: Vec<Arc<dyn Operation<Session, GooseEffect>>>,
-    recorded_model_configs: Option<Arc<Mutex<Vec<ModelConfig>>>>,
+    recorded_model_configs: Option<Arc<StdMutex<Vec<ModelConfig>>>>,
     _temp_dir: Arc<tempfile::TempDir>,
 }
 
@@ -187,6 +190,7 @@ impl TestPipeline {
                 COMPACTION_THRESHOLD,
             )));
         }
+        let extension_lease = Arc::clone(&self.extension_lease);
         let remaining_operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
             Arc::new(ToolPairCompactionOperation::new(
                 provider.clone(),
@@ -200,7 +204,10 @@ impl TestPipeline {
             )),
             Arc::new(DoctorOperation),
             Arc::new(ProjectOperation),
-            Arc::new(SkillOperation::new(self.hook_manager.clone())),
+            Arc::new(SkillOperation::new(
+                self.hook_manager.clone(),
+                Arc::clone(&extension_lease),
+            )),
             Arc::new(RecipeOperation::new(
                 provider.clone(),
                 self.hook_manager.clone(),
@@ -209,6 +216,8 @@ impl TestPipeline {
                 &self.goose_mode,
                 self.extension_manager.clone(),
                 self.hook_manager.clone(),
+                None,
+                Arc::clone(&extension_lease),
             )),
             Arc::new(UnknownToolOperation::new(self.hook_manager.clone())),
             Arc::new(RetryOperation::new(
@@ -226,8 +235,8 @@ impl TestPipeline {
         operations.extend(remaining_operations);
         operations.extend(self.extra_operations.clone());
         let request_preparer = GooseInferenceRequestPreparer {
-            #[cfg(feature = "code-mode")]
-            extension_manager: self.extension_manager.clone(),
+            extension_manager: Arc::clone(&self.extension_manager),
+            extension_lease,
             goose_mode: &self.goose_mode,
             prompt_manager: &self.prompt_manager,
             tool_inspection_manager: &self.tool_inspection_manager,
@@ -317,7 +326,7 @@ impl TestPipeline {
     }
 
     pub(super) fn record_model_configs(mut self) -> Self {
-        let model_configs = Arc::new(Mutex::new(Vec::new()));
+        let model_configs = Arc::new(StdMutex::new(Vec::new()));
         self.provider = Arc::new(RecordingProvider {
             inner: self.provider,
             model_configs: model_configs.clone(),
@@ -426,7 +435,7 @@ impl TestPipeline {
         let session = self.session().await?;
         let goal = self.goal.lock().await.clone();
         let grind = self.grind.lock().await.clone();
-        let pipeline = build_test_pipeline(
+        let mut pipeline = build_test_pipeline(
             self.session_manager.clone(),
             self.api.clone(),
             self.provider_features,
@@ -437,6 +446,7 @@ impl TestPipeline {
         .await?
         .with_hook_manager(self.hook_manager.clone())
         .with_stop_hook_block_cap(self.stop_hook_block_cap);
+        pipeline.extension_lease = Arc::clone(&self.extension_lease);
         *pipeline.goal.lock().await = goal;
         *pipeline.grind.lock().await = grind;
         Ok(pipeline)
@@ -482,6 +492,7 @@ impl TestPipeline {
         let mut events = Vec::new();
 
         for text in user_messages {
+            *self.extension_lease.lock().unwrap() = None;
             self.session_manager
                 .add_message(&self.session_id, &Message::user().with_text(text))
                 .await?;
@@ -493,6 +504,7 @@ impl TestPipeline {
     }
 
     pub(super) async fn run_message(&self, message: Message) -> Result<TestRun> {
+        *self.extension_lease.lock().unwrap() = None;
         self.session_manager
             .add_message(&self.session_id, &message)
             .await?;
@@ -504,6 +516,7 @@ impl TestPipeline {
         mut self,
         message: &str,
     ) -> Result<(Self, TestRun, usize)> {
+        *self.extension_lease.lock().unwrap() = None;
         self.session_manager
             .add_message(&self.session_id, &Message::user().with_text(message))
             .await?;
@@ -622,6 +635,7 @@ impl TestPipeline {
         message: &str,
         cancel: CancellationToken,
     ) -> Result<TestRun> {
+        *self.extension_lease.lock().unwrap() = None;
         self.session_manager
             .add_message(&self.session_id, &Message::user().with_text(message))
             .await?;
@@ -645,6 +659,7 @@ impl TestPipeline {
         action: ElicitationAction,
         user_data: serde_json::Value,
     ) -> Result<TestRun> {
+        *self.extension_lease.lock().unwrap() = None;
         self.session_manager
             .add_message(&self.session_id, &Message::user().with_text(message))
             .await?;
@@ -888,6 +903,7 @@ async fn build_test_pipeline(
         provider: provider.clone(),
         model_config,
         extension_manager,
+        extension_lease: Arc::new(StdMutex::new(None)),
         goose_mode: TokioMutex::new(session.goose_mode),
         prompt_manager: TokioMutex::new(PromptManager::new()),
         tool_inspection_manager,
@@ -935,8 +951,8 @@ async fn build_test_pipeline(
         if extension.name() == "calculator" {
             extension_manager
                 .add_client(
-                    "calculator".to_string(),
                     extension,
+                    Some(session.working_dir.clone()),
                     calculator.clone(),
                     calculator.get_info().cloned(),
                 )
