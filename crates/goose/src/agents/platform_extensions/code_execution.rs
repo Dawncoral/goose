@@ -848,7 +848,6 @@ mod tests {
                     bundled: None,
                     available_tools: vec![],
                 },
-                None,
                 Arc::new(VisibilityClient),
                 None,
             )
@@ -1197,7 +1196,6 @@ mod tests {
                     temp.path().join("sessions"),
                 )),
                 scheduler: None,
-                session: None,
                 use_login_shell_path: false,
             },
             ToolDisclosure::Filesystem,

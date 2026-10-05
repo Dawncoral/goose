@@ -855,7 +855,7 @@ impl Operation<Session, GooseEffect> for ToolExecutionOperation<'_> {
             return Ok(prompt_parts);
         }
 
-        let mut extensions = lease.instructions();
+        let mut extensions = lease.instructions().await;
         extensions.retain(|extension| extension.name != crate::skills::EXTENSION_NAME);
         if extensions.is_empty() {
             return Ok(prompt_parts);

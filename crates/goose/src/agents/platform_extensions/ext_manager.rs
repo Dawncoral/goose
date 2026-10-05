@@ -546,7 +546,6 @@ mod tests {
             provider: manager.get_provider().clone(),
             session_manager: manager.get_context().session_manager.clone(),
             scheduler: None,
-            session: None,
             use_login_shell_path: false,
         })
         .unwrap()

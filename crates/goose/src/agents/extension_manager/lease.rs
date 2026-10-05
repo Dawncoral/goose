@@ -425,23 +425,26 @@ impl ExtensionLease {
         Ok(resources)
     }
 
-    pub fn instructions(&self) -> Vec<ExtensionInfo> {
+    pub async fn instructions(&self) -> Vec<ExtensionInfo> {
         let working_dir = self
             .working_dir
-            .as_deref()
-            .unwrap_or(std::path::Path::new("."))
-            .to_string_lossy();
-        self.extensions
-            .iter()
-            .map(|extension| {
-                let instructions = extension.client.get_instructions().unwrap_or_default();
-                ExtensionInfo::new(
-                    &extension.key,
-                    &instructions.replace("{{WORKING_DIR}}", &working_dir),
-                    extension.supports_resources(),
-                )
-            })
-            .collect()
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let placeholder = working_dir.to_string_lossy();
+        let mut infos = Vec::new();
+        for extension in &self.extensions {
+            let instructions = extension
+                .client
+                .get_instructions(&self.scope_id, &working_dir)
+                .await
+                .unwrap_or_default();
+            infos.push(ExtensionInfo::new(
+                &extension.key,
+                &instructions.replace("{{WORKING_DIR}}", &placeholder),
+                extension.supports_resources(),
+            ));
+        }
+        infos
     }
 
     pub async fn moim(&self) -> Vec<String> {

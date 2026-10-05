@@ -4112,87 +4112,6 @@ mod tests {
         call_count: AtomicUsize,
     }
 
-    struct MovingDirectoryProvider {
-        manager: std::sync::Mutex<Option<Arc<ExtensionManager>>>,
-        session_id: std::sync::Mutex<Option<String>>,
-        new_working_dir: PathBuf,
-        tool_lists: std::sync::Mutex<Vec<Vec<String>>>,
-        call_count: AtomicUsize,
-    }
-
-    impl MovingDirectoryProvider {
-        fn new(new_working_dir: PathBuf) -> Self {
-            Self {
-                manager: std::sync::Mutex::new(None),
-                session_id: std::sync::Mutex::new(None),
-                new_working_dir,
-                tool_lists: std::sync::Mutex::new(Vec::new()),
-                call_count: AtomicUsize::new(0),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl crate::providers::base::Provider for MovingDirectoryProvider {
-        async fn stream(
-            &self,
-            _model_config: &goose_providers::model::ModelConfig,
-            _system_prompt: &str,
-            _messages: &[Message],
-            tools: &[Tool],
-        ) -> Result<MessageStream, ProviderError> {
-            self.tool_lists
-                .lock()
-                .unwrap()
-                .push(tools.iter().map(|tool| tool.name.to_string()).collect());
-            let call = self.call_count.fetch_add(1, Ordering::SeqCst);
-            let message = if call == 0 {
-                let manager = self
-                    .manager
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .expect("extension manager unavailable");
-                let session_id = self
-                    .session_id
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .expect("session unavailable");
-                manager
-                    .get_context()
-                    .session_manager
-                    .update(&session_id)
-                    .working_dir(self.new_working_dir.clone())
-                    .apply()
-                    .await
-                    .unwrap();
-                manager
-                    .update_working_dir(&self.new_working_dir, None, &session_id)
-                    .await
-                    .unwrap();
-                Message::assistant().with_tool_request(
-                    "move-directory",
-                    Ok(CallToolRequestParams::new("changing__value")),
-                )
-            } else {
-                Message::assistant().with_text("done")
-            };
-            Ok(stream_from_single_message(
-                message,
-                ProviderUsage::new("mock-model".to_string(), Usage::default()),
-            ))
-        }
-
-        fn get_name(&self) -> &str {
-            "moving-directory"
-        }
-
-        async fn get_context_limit(&self, _model: &str, _override_limit: Option<usize>) -> usize {
-            100_000
-        }
-    }
-
     impl RefreshingLeaseProvider {
         fn new() -> Self {
             Self {
@@ -4230,7 +4149,6 @@ mod tests {
                 manager
                     .add_client(
                         platform_extension("changing"),
-                        Some(PathBuf::default()),
                         Arc::new(LeaseValueClient("second")),
                         None,
                     )
@@ -4264,7 +4182,6 @@ mod tests {
             .extension_manager
             .add_client(
                 persisted_builtin("changing"),
-                Some(session.working_dir.clone()),
                 Arc::new(LeaseValueClient("first")),
                 None,
             )
@@ -4275,7 +4192,6 @@ mod tests {
             .extension_manager
             .add_client(
                 persisted_builtin("changing"),
-                Some(session.working_dir.clone()),
                 Arc::new(LeaseValueClient("second")),
                 None,
             )
@@ -4341,58 +4257,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_inference_refreshes_the_session_directory() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let new_working_dir = temp_dir.path().join("moved");
-        std::fs::create_dir(&new_working_dir)?;
-        let provider = Arc::new(MovingDirectoryProvider::new(new_working_dir));
-        let (agent, session_id) = create_test_agent(
-            temp_dir.path().join("data"),
-            crate::hooks::HookManager::from_plugins_for_test(vec![]),
-            provider.clone(),
-        )
-        .await?;
-        let session = agent
-            .config
-            .session_manager
-            .get_session(&session_id, false)
-            .await?;
-        agent
-            .extension_manager
-            .add_client(
-                persisted_builtin("changing"),
-                Some(session.working_dir),
-                Arc::new(LeaseValueClient("value")),
-                None,
-            )
-            .await;
-        *provider.manager.lock().unwrap() = Some(Arc::clone(&agent.extension_manager));
-        *provider.session_id.lock().unwrap() = Some(session_id.clone());
-
-        let mut stream = agent
-            .reply(
-                Message::user().with_text("move the directory"),
-                SessionConfig {
-                    id: session_id,
-                    schedule_id: None,
-                    max_turns: Some(100),
-                    retry_config: None,
-                },
-                false,
-                None,
-            )
-            .await?;
-        while let Some(event) = stream.next().await {
-            event?;
-        }
-
-        let tool_lists = provider.tool_lists.lock().unwrap();
-        assert_eq!(tool_lists.len(), 2);
-        assert!(tool_lists[1].iter().any(|tool| tool == "changing__value"));
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn inference_context_uses_the_lease_session_snapshot() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let new_working_dir = temp_dir.path().join("moved");
@@ -4416,7 +4280,6 @@ mod tests {
             .extension_manager
             .add_client(
                 persisted_builtin("changing"),
-                Some(stale_session.working_dir.clone()),
                 Arc::new(LeaseValueClient("value")),
                 None,
             )
