@@ -366,6 +366,7 @@ impl TestPipeline {
         )
         .await?
         .with_hook_manager(self.hook_manager.clone())
+        .with_max_turns(self.max_turns)
         .with_stop_hook_block_cap(self.stop_hook_block_cap);
         pipeline.extension_lease = Arc::clone(&self.extension_lease);
         *pipeline.goal.lock().await = goal;

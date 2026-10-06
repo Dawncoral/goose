@@ -3453,7 +3453,7 @@ impl Agent {
                             warn!("Final output tool has not been called yet. Continuing agent loop.");
                             let message = push_message_with_id(
                                 &mut messages_to_add,
-                                Message::user().with_text(FINAL_OUTPUT_CONTINUATION_MESSAGE),
+                                Message::user().with_text(FINAL_OUTPUT_CONTINUATION_MESSAGE).agent_only(),
                             );
                             yield AgentEvent::Message(message);
                         }
@@ -6164,6 +6164,33 @@ echo start >> "$PLUGIN_ROOT/hook.log"
         }
         assert_eq!(provider.call_count.load(Ordering::SeqCst), 2);
         assert_eq!(env.hook_invocations(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_hook_denial_retries_at_the_turn_limit_in_both_loops() -> Result<()> {
+        for use_state_machine in [false, true] {
+            let env = StopHookTestEnv::new(ALWAYS_BLOCK_SCRIPT)?;
+            let (agent, session_id, provider) = create_stop_hook_test_agent(&env, 2).await?;
+            let mut stream = agent
+                .reply(
+                    Message::user().with_text("hello"),
+                    SessionConfig {
+                        id: session_id,
+                        schedule_id: None,
+                        max_turns: Some(1),
+                        retry_config: None,
+                    },
+                    use_state_machine,
+                    None,
+                )
+                .await?;
+            while let Some(event) = stream.next().await {
+                event?;
+            }
+            assert_eq!(provider.call_count(), 3);
+            assert_eq!(env.hook_invocations(), 3);
+        }
         Ok(())
     }
 

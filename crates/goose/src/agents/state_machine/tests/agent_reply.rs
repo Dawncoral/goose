@@ -18,6 +18,7 @@ use super::calculator_extension::{delayed_value, value, CalculatorExtension, ADD
 use super::dummy_api::{DummyApi, ProviderFeatures};
 use crate::acp::server::GooseAcpAgent;
 use crate::agents::extension::ExtensionConfig;
+use crate::agents::final_output_tool::{FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_TOOL_NAME};
 use crate::agents::mcp_client::McpClientTrait;
 use crate::agents::state_machine::ops_toolcalling::EXPIRED_APPROVAL_RESPONSE;
 use crate::agents::{Agent, AgentConfig, AgentEvent, GoosePlatform, SessionConfig};
@@ -223,6 +224,65 @@ async fn both_loops_finish_a_plain_text_reply_on_the_last_allowed_turn() -> Resu
 
         assert_eq!(api.call_count(), 1);
         assert_eq!(messages.last().unwrap().as_concat_text(), "done");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn both_loops_keep_recipe_continuations_within_the_turn_budget() -> Result<()> {
+    for use_state_machine in [false, true] {
+        let (agent, api, session_id, _temp_dir) = agent_with_dummy_api().await?;
+        let recipe = crate::recipe::Recipe::builder()
+            .title("Structured output")
+            .description("Return structured output")
+            .instructions("Use the final output tool")
+            .response(crate::recipe::Response {
+                json_schema: Some(json!({ "type": "object" })),
+            })
+            .build()
+            .expect("valid recipe");
+        agent
+            .apply_recipe_components(recipe.response.clone(), true)
+            .await?;
+        agent
+            .config
+            .session_manager
+            .update(&session_id)
+            .recipe(Some(recipe))
+            .apply()
+            .await?;
+        api.on("compute the answer").reply("thinking about it");
+        api.on(FINAL_OUTPUT_CONTINUATION_MESSAGE)
+            .call(FINAL_OUTPUT_TOOL_NAME, json!({ "result": "42" }));
+
+        let messages = stream_messages(
+            agent
+                .reply(
+                    Message::user().with_text("compute the answer"),
+                    SessionConfig {
+                        id: session_id,
+                        schedule_id: None,
+                        max_turns: Some(1),
+                        retry_config: None,
+                    },
+                    use_state_machine,
+                    None,
+                )
+                .await?,
+        )
+        .await?;
+
+        assert_eq!(api.call_count(), 1);
+        assert_eq!(
+            messages.last().unwrap().as_concat_text(),
+            crate::agents::state_machine::MAX_TURNS_MESSAGE
+        );
+        let continuation = messages
+            .iter()
+            .find(|message| message.as_concat_text() == FINAL_OUTPUT_CONTINUATION_MESSAGE)
+            .expect("recipe continuation");
+        assert!(!continuation.is_user_visible());
+        assert!(continuation.is_agent_visible());
     }
     Ok(())
 }
