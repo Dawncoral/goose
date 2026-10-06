@@ -1416,6 +1416,11 @@ impl SummonClient {
             return Err("Delegated tasks cannot spawn further delegations".to_string());
         }
 
+        // TODO: When retiring the legacy loop, remove the async parameter and background-task
+        // options/guidance in create_delegate_tool and create_load_tool. In
+        // build_subagent_instructions, remove only the "For long-running work" sentence.
+        // Keep the remaining guidance.
+        // Context: https://github.com/aaif-goose/goose/pull/12632
         if from_state_machine {
             return self.handle_foreground_delegate(params, &session).await;
         }
