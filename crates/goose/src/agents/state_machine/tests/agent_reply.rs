@@ -162,6 +162,72 @@ async fn stream_messages(
 }
 
 #[tokio::test]
+async fn both_loops_execute_every_tool_from_the_last_allowed_reply() -> Result<()> {
+    for use_state_machine in [false, true] {
+        let (agent, api, session_id, calculator, _temp_dir) = agent_with_calculator().await?;
+        agent
+            .update_goose_mode(GooseMode::Auto, &session_id)
+            .await?;
+        api.on("add twice")
+            .calls([("first_add", ADD, value(1)), ("second_add", ADD, value(2))]);
+
+        let messages = stream_messages(
+            agent
+                .reply(
+                    Message::user().with_text("add twice"),
+                    SessionConfig {
+                        id: session_id,
+                        schedule_id: None,
+                        max_turns: Some(1),
+                        retry_config: None,
+                    },
+                    use_state_machine,
+                    None,
+                )
+                .await?,
+        )
+        .await?;
+
+        assert_eq!(api.call_count(), 1);
+        assert_eq!(calculator.total(), 3);
+        assert_eq!(
+            messages.last().unwrap().as_concat_text(),
+            crate::agents::state_machine::MAX_TURNS_MESSAGE
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn both_loops_finish_a_plain_text_reply_on_the_last_allowed_turn() -> Result<()> {
+    for use_state_machine in [false, true] {
+        let (agent, api, session_id, _temp_dir) = agent_with_dummy_api().await?;
+        api.on("hello").reply("done");
+
+        let messages = stream_messages(
+            agent
+                .reply(
+                    Message::user().with_text("hello"),
+                    SessionConfig {
+                        id: session_id,
+                        schedule_id: None,
+                        max_turns: Some(1),
+                        retry_config: None,
+                    },
+                    use_state_machine,
+                    None,
+                )
+                .await?,
+        )
+        .await?;
+
+        assert_eq!(api.call_count(), 1);
+        assert_eq!(messages.last().unwrap().as_concat_text(), "done");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn state_machine_confirmation_through_agent_resumes_tool_call() -> Result<()> {
     let _guard = env_lock::lock_env([("GOOSE_STATE_MACHINE", Some("1"))]);
     let (mut agent, api, session_id, calculator, temp_dir) = agent_with_calculator().await?;

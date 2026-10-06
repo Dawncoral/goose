@@ -148,7 +148,7 @@ async fn max_turns_counts_inference_calls_and_injects_budget() -> Result<()> {
     let result = pipeline.run(["keep going"]).await?;
     let calls = api.calls();
     assert_eq!(calls.len(), MAX_TURNS as usize);
-    assert_eq!(pipeline.calculator_total(), MAX_TURNS as i64 - 1);
+    assert_eq!(pipeline.calculator_total(), MAX_TURNS as i64);
 
     let first_budgeted_call = MAX_TURNS.div_ceil(2) as usize;
     assert!(!calls[first_budgeted_call - 1].input_contains("<turn-budget>"));
